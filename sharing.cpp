@@ -67,24 +67,16 @@ class Lock {
 };
 
 class AtomicIncrement : public Lock {
-	private:
-		pthread_mutex_t mutex;
-	
 	public:
-		AtomicIncrement() : Lock("Atomic Increment") {
-			this->mutex = PTHREAD_MUTEX_INITIALIZER;
-		}
+		AtomicIncrement() : Lock("Atomic Increment") {}
+
 		void increment(volatile VINT *gs) {
-			(*gs)++;
+			InterlockedIncrement(gs);
 		}
 
-		void acquire() {
-			pthread_mutex_lock(&mutex);
-		}
-
-		void release() {
-			pthread_mutex_unlock(&mutex);
-		}
+		// implement but don't use
+		void acquire() {}
+		void release() {}
 };
 
 #define LOCKTYPE	0
