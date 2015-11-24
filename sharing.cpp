@@ -123,7 +123,6 @@ class TestAndSetLock : public Lock {
 	private:
 		int lock;
 
-		// implement but don't use
 		void acquire(int pid = 0) {
 			while(InterlockedExchange(&lock, 1));
 		}
@@ -143,6 +142,30 @@ class TestAndSetLock : public Lock {
 		}
 };
 
+class TestAndTestAndSetLock : public Lock {
+	private:
+		int lock;
+
+		void acquire(int pid = 0) {
+			do {
+				while(lock == 1);
+			} while(InterlockedExchange(&lock, 1));
+		}
+		void release(int pid = 0) {
+			lock = 0;
+		}
+	
+	public:
+		TestAndTestAndSetLock() : Lock("TestAndTestAndSet Lock") {
+			lock = 0;
+		}
+
+		void increment(volatile VINT *gs, int pid = 0) {
+			acquire();
+			(*g)++;
+			release();
+		}
+};
 		
 Lock *lock;
 
@@ -193,7 +216,7 @@ int main()
     char dateAndTime[256];
     getDateAndTime(dateAndTime, sizeof(dateAndTime));
 
-#define LOCKTYPE 2
+#define LOCKTYPE 3
 
 #if LOCKTYPE == 0
 lock = new AtomicIncrement();
@@ -201,6 +224,8 @@ lock = new AtomicIncrement();
 lock = new BakeryLock();
 #elif LOCKTYPE == 2
 lock = new TestAndSetLock();
+#elif LOCKTYPE == 3
+lock = new TestAndTestAndSetLock();
 #endif
 
     //
