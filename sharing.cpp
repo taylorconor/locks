@@ -51,40 +51,77 @@ UINT64 cnt3;                                    // NB: in Debug mode allocated i
 class Lock {
 	private:
 		string s;
+
+		virtual void acquire(int pid = 0) = 0;
+		virtual void release(int pid = 0) = 0;
 	public:
 		Lock(string s) {
-			cout << "constructing lock: " << s << endl;
 			this->s = s;
 		}
 
-		virtual	void increment(volatile VINT *gs) = 0;
-		virtual void acquire() = 0;
-		virtual void release() = 0;
-
+		virtual	void increment(volatile VINT *gs, int pid = 0) = 0;
+		
 		string str() {
 			return s;
 		}
 };
 
 class AtomicIncrement : public Lock {
+	private:
+		// implement but don't use
+		void acquire(int pid = 0) {}
+		void release(int pid = 0) {}
 	public:
 		AtomicIncrement() : Lock("Atomic Increment") {}
 
-		void increment(volatile VINT *gs) {
+		void increment(volatile VINT *gs, int pid = 0) {
 			InterlockedIncrement(gs);
 		}
-
-		// implement but don't use
-		void acquire() {}
-		void release() {}
 };
 
-#define LOCKTYPE	0
-#if LOCKTYPE == 0
+class BakeryLock : public Lock {
+	private:
+		int *number;
+		int *choosing;
 
-Lock *lock = new AtomicIncrement();
+		void acquire(int pid) {
+			choosing[pid] = 1;
+			_mm_mfence();
+			int max = 0;
+			for (int i = 0; i < maxThread; i++) {
+				if (number[i] > max)
+					max = number[i];
+			}
+			number[pid] = max+1;
+			choosing[pid] = 0;
+			_mm_mfence();
+			for (int j = 0; j < maxThread; j++) {
+				while(choosing[j]);
+				while((number[j] != 0) && 
+					((number[j] < number[pid]) || 
+					 ((number[j] == number[pid]) && 
+					  (j < pid))));
+			}
+		}
+		void release(int pid) {
+			number[pid] = 0;
+		}
+	public:
+		BakeryLock() : Lock("Bakery Lock") {
+			cout << "maxThread = " << maxThread << endl;
+			number = (int*)calloc(maxThread, sizeof(int));
+			choosing = (int*)calloc(maxThread, sizeof(int));
+		}
 
-#endif
+		void increment(volatile VINT *gs, int pid) {
+			acquire(pid);
+			(*gs)++;
+			release(pid);
+		}
+};
+		
+Lock *lock;
+
 
 //
 // worker
@@ -102,9 +139,7 @@ WORKER worker(void *vthread)
 
     while (1) {
         for (int i = 0; i < NOPS; i++) {
-		lock->acquire();
-		lock->increment(gs);
-		lock->release();
+		lock->increment(gs, thread);
 	}
 	n += NOPS;
 
@@ -126,13 +161,21 @@ WORKER worker(void *vthread)
 int main()
 {
     ncpu = getNumberOfCPUs();   // number of logical CPUs
-    maxThread = 2 * ncpu;       // max number of threads
+    maxThread = /*2 * */ncpu;       // max number of threads
 
     //
     // get date
     //
     char dateAndTime[256];
     getDateAndTime(dateAndTime, sizeof(dateAndTime));
+
+#define LOCKTYPE 1
+
+#if LOCKTYPE == 0
+lock = new AtomicIncrement();
+#elif LOCKTYPE == 1
+lock = new BakeryLock();
+#endif
 
     //
     // console output
