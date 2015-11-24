@@ -108,7 +108,6 @@ class BakeryLock : public Lock {
 		}
 	public:
 		BakeryLock() : Lock("Bakery Lock") {
-			cout << "maxThread = " << maxThread << endl;
 			number = (int*)calloc(maxThread, sizeof(int));
 			choosing = (int*)calloc(maxThread, sizeof(int));
 		}
@@ -119,6 +118,31 @@ class BakeryLock : public Lock {
 			release(pid);
 		}
 };
+
+class TestAndSetLock : public Lock {
+	private:
+		int lock;
+
+		// implement but don't use
+		void acquire(int pid = 0) {
+			while(InterlockedExchange(&lock, 1));
+		}
+		void release(int pid = 0) {
+			lock = 0;
+		}
+	
+	public:
+		TestAndSetLock() : Lock("TestAndSet Lock") {
+			lock = 0;
+		}
+
+		void increment(volatile VINT *gs, int pid = 0) {
+			acquire();
+			(*g)++;
+			release();
+		}
+};
+
 		
 Lock *lock;
 
@@ -161,7 +185,7 @@ WORKER worker(void *vthread)
 int main()
 {
     ncpu = getNumberOfCPUs();   // number of logical CPUs
-    maxThread = /*2 * */ncpu;       // max number of threads
+    maxThread = ncpu;       // max number of threads
 
     //
     // get date
@@ -169,12 +193,14 @@ int main()
     char dateAndTime[256];
     getDateAndTime(dateAndTime, sizeof(dateAndTime));
 
-#define LOCKTYPE 1
+#define LOCKTYPE 2
 
 #if LOCKTYPE == 0
 lock = new AtomicIncrement();
 #elif LOCKTYPE == 1
 lock = new BakeryLock();
+#elif LOCKTYPE == 2
+lock = new TestAndSetLock();
 #endif
 
     //
