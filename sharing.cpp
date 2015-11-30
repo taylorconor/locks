@@ -7,7 +7,7 @@ using namespace std;                            // cout
 
 #define K           1024                        //
 #define GB          (K*K*K)                     //
-#define NOPS        10000                       //
+#define NOPS        100                       //
 #define NSECONDS    2                           // run each test for NSECONDS
 
 #define VINT    UINT64                          //  64 bit counter
@@ -47,6 +47,26 @@ ALIGN(64) UINT64 cnt0;
 ALIGN(64) UINT64 cnt1;
 ALIGN(64) UINT64 cnt2;
 UINT64 cnt3;                                    // NB: in Debug mode allocated in cache line occupied by cnt0
+
+class ALIGNEDMA {
+	public:
+		void *operator new(size_t);
+		void operator delete(void *);
+};
+
+void *ALIGNEDMA::operator new(size_t sz) {
+	sz = (sz + lineSz - 1) / lineSz * lineSz;
+	return _aligned_malloc(sz, lineSz);
+}
+
+void ALIGNEDMA::operator delete(void *p) {
+	_aligned_free(p);
+}
+
+struct QNode : public ALIGNEDMA {
+	volatile int waiting;
+	volatile QNode *next;
+};
 
 class Lock {
 	private:
@@ -166,6 +186,46 @@ class TestAndTestAndSetLock : public Lock {
 			release();
 		}
 };
+
+class MCSLock : public Lock {
+	private:
+		volatile QNode **lock;
+
+		void acquire(int pid = 0) {
+			volatile QNode *qn = new volatile QNode();
+			qn->next = NULL;
+			volatile QNode *pred = (QNode*)InterlockedExchangePointer((PVOID*)lock, (PVOID)qn);
+			if (pred == NULL)
+				return;
+			qn->waiting = 1;
+			pred->next = qn;
+			while(qn->waiting);
+		}
+		void release(int pid = 0) {
+			volatile QNode *qn = new QNode();
+			volatile QNode *succ;
+			if (!(succ = qn->next)) {
+				if (InterlockedCompareExchangePointer((PVOID*)lock, NULL, (PVOID)qn) == qn)
+					return;
+				do {
+					succ = qn->next;
+				} while(!succ);
+			}
+			succ->waiting = 0;
+		}
+	
+	public:
+		MCSLock() : Lock("MCS Lock") {
+			lock = new volatile QNode*;
+			*lock = NULL;
+		}
+
+		void increment(volatile VINT *gs, int pid = 0) {
+			acquire();
+			(*g)++;
+			release();
+		}
+};
 		
 Lock *lock;
 
@@ -208,7 +268,7 @@ WORKER worker(void *vthread)
 int main()
 {
     ncpu = getNumberOfCPUs();   // number of logical CPUs
-    maxThread = ncpu;       // max number of threads
+    maxThread = 2 * ncpu;       // max number of threads
 
     //
     // get date
@@ -216,7 +276,7 @@ int main()
     char dateAndTime[256];
     getDateAndTime(dateAndTime, sizeof(dateAndTime));
 
-#define LOCKTYPE 3
+#define LOCKTYPE 4
 
 #if LOCKTYPE == 0
 lock = new AtomicIncrement();
@@ -226,6 +286,8 @@ lock = new BakeryLock();
 lock = new TestAndSetLock();
 #elif LOCKTYPE == 3
 lock = new TestAndTestAndSetLock();
+#elif LOCKTYPE == 4
+lock = new MCSLock();
 #endif
 
     //
