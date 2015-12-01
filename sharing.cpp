@@ -72,8 +72,6 @@ class Lock {
 	private:
 		string s;
 
-		virtual void acquire(int pid = 0) = 0;
-		virtual void release(int pid = 0) = 0;
 	public:
 		Lock(string s) {
 			this->s = s;
@@ -87,10 +85,6 @@ class Lock {
 };
 
 class AtomicIncrement : public Lock {
-	private:
-		// implement but don't use
-		void acquire(int pid = 0) {}
-		void release(int pid = 0) {}
 	public:
 		AtomicIncrement() : Lock("Atomic Increment") {}
 
@@ -143,10 +137,10 @@ class TestAndSetLock : public Lock {
 	private:
 		int lock;
 
-		void acquire(int pid = 0) {
+		void acquire() {
 			while(InterlockedExchange(&lock, 1));
 		}
-		void release(int pid = 0) {
+		void release() {
 			lock = 0;
 		}
 	
@@ -166,12 +160,12 @@ class TestAndTestAndSetLock : public Lock {
 	private:
 		int lock;
 
-		void acquire(int pid = 0) {
+		void acquire() {
 			do {
 				while(lock == 1);
 			} while(InterlockedExchange(&lock, 1));
 		}
-		void release(int pid = 0) {
+		void release() {
 			lock = 0;
 		}
 	
@@ -191,18 +185,18 @@ class MCSLock : public Lock {
 	private:
 		volatile QNode **lock;
 
-		void acquire(int pid = 0) {
+		volatile QNode *acquire() {
 			volatile QNode *qn = new volatile QNode();
 			qn->next = NULL;
 			volatile QNode *pred = (QNode*)InterlockedExchangePointer((PVOID*)lock, (PVOID)qn);
 			if (pred == NULL)
-				return;
+				return qn;
 			qn->waiting = 1;
 			pred->next = qn;
 			while(qn->waiting);
+			return qn;
 		}
-		void release(int pid = 0) {
-			volatile QNode *qn = new QNode();
+		void release(volatile QNode *qn) {
 			volatile QNode *succ;
 			if (!(succ = qn->next)) {
 				if (InterlockedCompareExchangePointer((PVOID*)lock, NULL, (PVOID)qn) == qn)
@@ -221,9 +215,9 @@ class MCSLock : public Lock {
 		}
 
 		void increment(volatile VINT *gs, int pid = 0) {
-			acquire();
+			volatile QNode *qn = acquire();
 			(*g)++;
-			release();
+			release(qn);
 		}
 };
 		
